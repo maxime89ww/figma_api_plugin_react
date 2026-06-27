@@ -58,66 +58,6 @@ textarea {
   place-items: start;
 }
 
-.generator-shell.update-available {
-  padding-bottom: 56px;
-}
-
-.update-banner {
-  position: absolute;
-  z-index: 8;
-  right: 32px;
-  bottom: 8px;
-  left: 32px;
-  display: flex;
-  min-height: 42px;
-  align-items: center;
-  gap: 10px;
-  padding: 7px 8px 7px 12px;
-  border: 1px solid rgb(181 181 181 / 30%);
-  border-radius: 12px;
-  background: #ffffff;
-  box-shadow: 0 2px 15px rgb(0 0 0 / 10%);
-  color: #333333;
-}
-
-.update-banner div {
-  display: grid;
-  min-width: 0;
-  margin-right: auto;
-  gap: 3px;
-}
-
-.update-banner strong {
-  font-size: 12px;
-  line-height: 1.1;
-}
-
-.update-banner span {
-  color: #8f8f8f;
-  font-size: 10px;
-  font-weight: 400;
-}
-
-.update-banner button {
-  height: 28px;
-  padding: 0 11px;
-  border: 0;
-  border-radius: 8px;
-  background: #ffdd2d;
-  color: #333333;
-  font-size: 11px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.update-banner .update-dismiss {
-  width: 24px;
-  padding: 0;
-  background: transparent;
-  color: #9299a2;
-  font-size: 18px;
-}
-
 .generator-shell.has-references,
 .generator-shell.dragging-reference,
 .generator-shell.history-open,

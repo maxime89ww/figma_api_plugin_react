@@ -1,37 +1,53 @@
 # Figma API Image Generator
 
-## Проверка обновлений через GitLab
+Плагин Figma для генерации и редактирования изображений через Polza AI.
 
-1. В `src/plugin/update-config.ts` укажите raw-ссылку на файл `update.json` из вашего GitLab:
+## Установка плагина
 
-```ts
-export const UPDATE_MANIFEST_URL =
-  'https://gitlab.company.ru/team/project/-/raw/main/update.json';
-```
-
-Также добавьте точный HTTPS-домен GitLab в `networkAccess.allowedDomains` файла `manifest.json`. Плагин намеренно не разрешает запросы к произвольным доменам.
-
-2. Добавьте в репозиторий `update.json`:
-
-```json
-{
-  "version": "1.0.1",
-  "downloadUrl": "https://gitlab.company.ru/team/project/-/releases/v1.0.1",
-  "notes": "Краткое описание изменений"
-}
-```
-
-3. Версию установленной сборки меняйте в `package.json`. Поддерживаются версии `1.2.3` и `v1.2.3`.
-4. Соберите плагин командой `npm run build`.
-
-Проверка выполняется при запуске и не блокирует работу при недоступности GitLab. Обе ссылки должны использовать HTTPS. Для приватного GitLab файл `update.json` должен быть доступен без токена (например, через GitLab Pages или внутренний endpoint), потому что секрет нельзя безопасно встраивать в Figma-плагин.
-
-Ссылки `update.json` и `downloadUrl` должны использовать один и тот же HTTPS-домен. Это предотвращает перенаправление пользователя на посторонний сайт.
-
-## Команды
+### 4. Соберите плагин
 
 ```bash
+npm run build
+```
+
+После успешной сборки появятся файлы `dist/plugin/code.js` и `dist/ui.html`.
+
+### 5. Подключите плагин к Figma
+
+1. Откройте Figma Desktop и любой дизайн-файл.
+2. Откройте меню **Plugins → Development → Import plugin from manifest**.
+3. Выберите файл `manifest.json` в корне скачанного проекта.
+4. Подтвердите импорт.
+
+### 6. Запустите плагин
+
+1. Откройте **Plugins → Development → Figma API Image Generator**.
+2. Нажмите кнопку с иконкой ключа.
+3. Введите API-ключ Polza AI и нажмите **Сохранить**.
+4. Введите описание изображения и нажмите **Harvest!**.
+
+API-ключ сохраняется локально средствами Figma и не записывается в репозиторий.
+
+## Обновление локальной версии
+
+```bash
+git pull
+npm ci
+npm run build
+```
+
+После сборки закройте запущенный экземпляр плагина и откройте его снова в Figma.
+
+## Разработка
+
+```bash
+npm install
 npm run start
+```
+
+## Проверка и сборка
+
+```bash
 npm run test
 npm run build
 ```
