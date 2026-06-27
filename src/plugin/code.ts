@@ -1,8 +1,5 @@
 /// <reference types="@figma/plugin-typings" />
 
-import packageJson from '../../package.json';
-import {UPDATE_MANIFEST_URL} from './update-config';
-
 type ReferenceImage = {
   id?: number;
   name: string;
@@ -62,14 +59,7 @@ type UiMessage =
   | {type: 'clear-api-key'}
   | {type: 'request-api-key-status'}
   | {type: 'request-history'}
-  | {type: 'open-update-url'; url: string}
   | {type: 'resize-ui'; height: number};
-
-type UpdateManifest = {
-  version: string;
-  downloadUrl: string;
-  notes?: string;
-};
 
 type PolzaImageResponse = {
   id?: string;
@@ -108,7 +98,6 @@ const MAX_REFERENCE_BYTES = 20 * 1024 * 1024;
 const MAX_REFERENCES_TOTAL_BYTES = 60 * 1024 * 1024;
 const MAX_GENERATED_IMAGE_BYTES = 40 * 1024 * 1024;
 let lastSelectionImageKey = '';
-let approvedUpdateUrl = '';
 
 figma.showUI(__html__, {
   width: 503,
@@ -117,7 +106,6 @@ figma.showUI(__html__, {
 });
 
 void postHistory();
-void checkForUpdates();
 
 if (figma.command !== 'export-action-log') {
   void postSelectionReference();
@@ -128,13 +116,6 @@ if (figma.command !== 'export-action-log') {
 
 figma.ui.onmessage = async (message: UiMessage) => {
   try {
-    if (message.type === 'open-update-url') {
-      if (approvedUpdateUrl && message.url === approvedUpdateUrl) {
-        figma.openExternal(message.url);
-      }
-      return;
-    }
-
     if (message.type === 'request-api-key-status') {
       await postApiKeyStatus();
       return;
@@ -233,91 +214,6 @@ figma.ui.onmessage = async (message: UiMessage) => {
     });
   }
 };
-
-async function checkForUpdates(): Promise<void> {
-  const manifestUrl = UPDATE_MANIFEST_URL.trim();
-
-  if (!manifestUrl) {
-    return;
-  }
-
-  try {
-    const manifestHostname = getHttpsHostname(manifestUrl);
-
-    if (!manifestHostname) {
-      throw new Error('Update manifest URL must use HTTPS');
-    }
-
-    const response = await fetch(manifestUrl, {cache: 'no-store'});
-
-    if (!response.ok) {
-      throw new Error(`Update check failed with HTTP ${response.status}`);
-    }
-
-    if (getHttpsHostname(response.url) !== manifestHostname) {
-      throw new Error('Update manifest redirected to an untrusted host');
-    }
-
-    const manifest = (await response.json()) as Partial<UpdateManifest>;
-
-    if (
-      typeof manifest.version !== 'string' ||
-      typeof manifest.downloadUrl !== 'string' ||
-      getHttpsHostname(manifest.downloadUrl) !== manifestHostname
-    ) {
-      throw new Error('Invalid update manifest');
-    }
-
-    if (compareVersions(manifest.version, packageJson.version) > 0) {
-      approvedUpdateUrl = manifest.downloadUrl;
-      figma.ui.postMessage({
-        type: 'update-available',
-        currentVersion: packageJson.version,
-        version: manifest.version,
-        downloadUrl: manifest.downloadUrl,
-        notes: typeof manifest.notes === 'string' ? manifest.notes : undefined,
-      });
-    }
-  } catch (error) {
-    // Update checks must never block normal plugin startup.
-    console.warn('Unable to check for plugin updates:', errorToMessage(error));
-  }
-}
-
-function compareVersions(left: string, right: string): number {
-  const leftParts = normalizeVersion(left);
-  const rightParts = normalizeVersion(right);
-  const length = Math.max(leftParts.length, rightParts.length);
-
-  for (let index = 0; index < length; index += 1) {
-    const difference = (leftParts[index] ?? 0) - (rightParts[index] ?? 0);
-
-    if (difference !== 0) {
-      return difference > 0 ? 1 : -1;
-    }
-  }
-
-  return 0;
-}
-
-function normalizeVersion(version: string): number[] {
-  return version
-    .trim()
-    .replace(/^v/i, '')
-    .split(/[.-]/)
-    .map((part) => Number.parseInt(part, 10))
-    .map((part) => (Number.isFinite(part) ? part : 0));
-}
-
-function getHttpsHostname(url: string): string | null {
-  try {
-    const parsedUrl = new URL(url);
-
-    return parsedUrl.protocol === 'https:' ? parsedUrl.hostname.toLowerCase() : null;
-  } catch {
-    return null;
-  }
-}
 
 if (figma.command === 'export-action-log') {
   void exportActionLog();

@@ -27,19 +27,11 @@ type HistoryItem = {
   createdAt: number;
 };
 
-type UpdateInfo = {
-  currentVersion: string;
-  version: string;
-  downloadUrl: string;
-  notes?: string;
-};
-
 type PluginMessage =
   | {type: 'request-api-key'; pendingRequest: GenerateImageRequest}
   | {type: 'api-key-status' | 'api-key-saved' | 'api-key-cleared'; hasApiKey: boolean}
   | {type: 'history-loaded'; history: HistoryItem[]}
   | {type: 'selection-reference-updated'; reference: ReferenceImage | null}
-  | ({type: 'update-available'} & UpdateInfo)
   | {type: 'generation-started' | 'generation-finished' | 'generation-error'; message?: string};
 
 const modelOptions = ['Nano Banana 2', 'GPT Image 2'];
@@ -63,7 +55,6 @@ export function App() {
   const [references, setReferences] = useState<ReferenceImage[]>([]);
   const [selectedReference, setSelectedReference] = useState<ReferenceImage | null>(null);
   const [history, setHistory] = useState<HistoryItem[]>([]);
-  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const dragDepthRef = useRef(0);
 
   const visibleReferences = useMemo(
@@ -122,11 +113,6 @@ export function App() {
 
       if (message.type === 'selection-reference-updated') {
         setSelectedReference(message.reference);
-        return;
-      }
-
-      if (message.type === 'update-available') {
-        setUpdateInfo(message);
       }
     };
 
@@ -138,13 +124,11 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    const baseHeight = visibleReferences.length || isHistoryOpen || isApiKeyOpen || isDraggingReference ? 220 : 200;
-
     postPluginMessage({
       type: 'resize-ui',
-      height: baseHeight + (updateInfo ? 52 : 0),
+      height: visibleReferences.length || isHistoryOpen || isApiKeyOpen || isDraggingReference ? 220 : 200,
     });
-  }, [visibleReferences.length, isHistoryOpen, isApiKeyOpen, isDraggingReference, updateInfo]);
+  }, [visibleReferences.length, isHistoryOpen, isApiKeyOpen, isDraggingReference]);
 
   function openApiKey() {
     setIsApiKeyOpen(true);
@@ -333,7 +317,6 @@ export function App() {
     isHistoryOpen ? 'history-open' : '',
     isApiKeyOpen ? 'api-open' : '',
     isDraggingReference ? 'dragging-reference' : '',
-    updateInfo ? 'update-available' : '',
   ]
     .filter(Boolean)
     .join(' ');
@@ -458,24 +441,6 @@ export function App() {
           </div>
         </section>
       )}
-      {updateInfo ? (
-        <aside className="update-banner" role="status">
-          <div>
-            <strong>Доступна версия {updateInfo.version}</strong>
-            <span>Сейчас установлена {updateInfo.currentVersion}</span>
-          </div>
-          <button
-            type="button"
-            title={updateInfo.notes}
-            onClick={() => postPluginMessage({type: 'open-update-url', url: updateInfo.downloadUrl})}
-          >
-            Обновить
-          </button>
-          <button className="update-dismiss" type="button" aria-label="Скрыть" onClick={() => setUpdateInfo(null)}>
-            ×
-          </button>
-        </aside>
-      ) : null}
     </main>
   );
 }
