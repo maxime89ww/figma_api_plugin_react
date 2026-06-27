@@ -1,0 +1,21 @@
+{
+  "name": "Figma API Image Generator",
+  "id": "figma-api-image-generator",
+  "api": "1.0.0",
+  "main": "dist/plugin/code.js",
+  "ui": "dist/ui.html",
+  "editorType": ["figma"],
+  "menu": [
+    {
+      "name": "Open generator",
+      "command": "open-generator"
+    },
+    {
+      "name": "Export usage log",
+      "command": "export-action-log"
+    }
+  ],
+  "networkAccess": {
+    "allowedDomains": ["https://polza.ai", "https://s3.polza.ai"]
+  }
+}
