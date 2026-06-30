@@ -52,6 +52,11 @@ type GenerationIndicator = {
   dispose: () => void;
 };
 
+type ShimmerAnimation = {
+  stop: () => void;
+  remove: () => void;
+};
+
 type UiMessage =
   | GenerateImageMessage
   | SaveApiKeyMessage
@@ -333,6 +338,7 @@ async function paintNodeWithImage(node: RectangleNode, imageBytes: Uint8Array, p
 
   node.name = `Polza AI - ${prompt.slice(0, 40)}`;
   node.opacity = 1;
+  node.cornerRadius = 0;
   node.fills = [
     {
       type: 'IMAGE',
@@ -360,24 +366,26 @@ function createNewGenerationSkeleton(prompt: string): GenerationIndicator {
   node.resize(size, size);
   node.x = bounds.x + bounds.width / 2 - size / 2;
   node.y = bounds.y + bounds.height / 2 - size / 2;
-  node.cornerRadius = 24;
-  node.fills = [getSkeletonFill(0)];
+  node.cornerRadius = 0;
+  node.fills = [getLoadingBackgroundFill()];
 
   figma.currentPage.appendChild(node);
   figma.currentPage.selection = [node];
   figma.viewport.scrollAndZoomIntoView([node]);
 
-  const stopAnimation = animateSkeletonNode(node, 'new');
+  const shimmer = createShimmer(node);
 
   return {
     mode: 'new',
     node,
     complete: async (imageBytes, finalPrompt) => {
-      stopAnimation();
+      shimmer.stop();
+      shimmer.remove();
       await paintNodeWithImage(node, imageBytes, finalPrompt);
     },
     dispose: () => {
-      stopAnimation();
+      shimmer.stop();
+      shimmer.remove();
       removeNode(node);
     },
   };
@@ -390,14 +398,9 @@ function createEditGenerationOverlay(target: SceneNode, prompt: string): Generat
   node.resize(getNodeWidth(target), getNodeHeight(target));
   node.x = 'x' in target ? target.x : 0;
   node.y = 'y' in target ? target.y : 0;
-  node.opacity = 0.28;
-  node.fills = [getSkeletonFill(0)];
-
-  if ('cornerRadius' in target && typeof target.cornerRadius === 'number') {
-    node.cornerRadius = target.cornerRadius;
-  } else {
-    node.cornerRadius = 16;
-  }
+  node.opacity = 1;
+  node.cornerRadius = 0;
+  node.fills = [getLoadingBackgroundFill()];
 
   const parent = target.parent;
 
@@ -407,56 +410,86 @@ function createEditGenerationOverlay(target: SceneNode, prompt: string): Generat
     figma.currentPage.appendChild(node);
   }
 
-  const stopAnimation = animateSkeletonNode(node, 'edit');
+  const shimmer = createShimmer(node);
 
   return {
     mode: 'edit',
     node,
     complete: async (imageBytes, finalPrompt) => {
-      stopAnimation();
+      shimmer.stop();
+      shimmer.remove();
       removeNode(node);
       await insertImageBytes(imageBytes, finalPrompt);
     },
     dispose: () => {
-      stopAnimation();
+      shimmer.stop();
+      shimmer.remove();
       removeNode(node);
     },
   };
 }
 
-function animateSkeletonNode(node: RectangleNode, mode: GenerationIndicator['mode']): () => void {
-  let step = 0;
+function createShimmer(node: RectangleNode): ShimmerAnimation {
+  const shimmer = figma.createRectangle();
+  const shimmerWidth = Math.max(40, node.width * 0.28);
+  const shimmerHeight = Math.max(40, node.height * 0.28);
+
+  shimmer.name = 'Polza AI - Loading shimmer';
+  shimmer.resize(shimmerWidth, shimmerHeight);
+  shimmer.x = node.x;
+  shimmer.y = node.y;
+  shimmer.cornerRadius = 0;
+  shimmer.opacity = 0.2;
+  shimmer.fills = [getShimmerHighlightFill()];
+
+  const parent = node.parent;
+
+  if (parent && 'appendChild' in parent) {
+    parent.appendChild(shimmer);
+  } else {
+    figma.currentPage.appendChild(shimmer);
+  }
+
+  const startedAt = Date.now();
+  const durationMs = 1500;
   const timer = setInterval(() => {
-    if (node.removed) {
+    if (node.removed || shimmer.removed) {
       clearInterval(timer);
       return;
     }
 
-    step += 1;
-    const progress = (Math.sin(step / 5) + 1) / 2;
+    const progress = ((Date.now() - startedAt) % durationMs) / durationMs;
 
-    node.fills = [getSkeletonFill(progress)];
-
-    if (mode === 'edit') {
-      node.opacity = 0.18 + progress * 0.18;
-    }
-  }, 80);
-
-  return () => clearInterval(timer);
-}
-
-function getSkeletonFill(progress: number): SolidPaint {
-  const from = 0.84;
-  const to = 0.95;
-  const value = from + (to - from) * progress;
+    shimmer.x = node.x + progress * Math.max(0, node.width - shimmerWidth);
+    shimmer.y = node.y + progress * Math.max(0, node.height - shimmerHeight);
+  }, 50);
 
   return {
+    stop: () => clearInterval(timer),
+    remove: () => removeNode(shimmer),
+  };
+}
+
+function getLoadingBackgroundFill(): SolidPaint {
+  return {
     type: 'SOLID',
-    color: {
-      r: value,
-      g: value,
-      b: value,
-    },
+    color: {r: 0.06, g: 0.06, b: 0.06},
+    opacity: 0.5,
+  };
+}
+
+function getShimmerHighlightFill(): GradientPaint {
+  return {
+    type: 'GRADIENT_RADIAL',
+    gradientTransform: [
+      [1, 0, 0],
+      [0, 1, 0],
+    ],
+    gradientStops: [
+      {position: 0, color: {r: 1, g: 1, b: 1, a: 1}},
+      {position: 0.5, color: {r: 1, g: 1, b: 1, a: 0.45}},
+      {position: 1, color: {r: 1, g: 1, b: 1, a: 0}},
+    ],
   };
 }
 
@@ -703,25 +736,117 @@ async function exportActionLog(): Promise<void> {
   const safePayload = JSON.stringify(payload).replaceAll('</script', '<\\/script');
 
   figma.showUI(
-    `<script>
+    `<style>
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        padding: 24px;
+        background: #ffffff;
+        color: #252525;
+        font: 13px/1.4 Inter, system-ui, sans-serif;
+      }
+      h1 { margin: 0 0 8px; font-size: 18px; line-height: 1.2; }
+      p { margin: 0 0 18px; color: #666666; }
+      .meta {
+        display: flex;
+        gap: 16px;
+        margin-bottom: 20px;
+        padding: 12px;
+        border-radius: 10px;
+        background: #f5f5f5;
+      }
+      .meta strong { display: block; color: #252525; font-size: 15px; }
+      .meta span { color: #777777; font-size: 11px; }
+      .actions { display: grid; gap: 8px; }
+      button {
+        width: 100%;
+        height: 38px;
+        border: 0;
+        border-radius: 9px;
+        font: inherit;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      #download { background: #ffdd2d; color: #252525; }
+      #close { height: 30px; background: transparent; color: #777777; font-weight: 400; }
+      button:disabled { opacity: 0.5; cursor: default; }
+      #status { min-height: 18px; margin: 12px 0 0; color: #666666; font-size: 12px; }
+      #status.error { color: #d14324; }
+    </style>
+    <main>
+      <h1>Экспорт журнала</h1>
+      <p>Сохраните технический журнал для анализа ошибок и времени генерации.</p>
+      <div class="meta">
+        <div><strong>${entries.length}</strong><span>событий</span></div>
+        <div><strong id="size">—</strong><span>размер JSON</span></div>
+      </div>
+      <div class="actions">
+        <button id="download" type="button">Скачать в Downloads</button>
+        <button id="close" type="button">Отмена</button>
+      </div>
+      <p id="status" role="status"></p>
+    </main>
+    <script>
       const payload = ${safePayload};
       const blob = new Blob([payload], {type: 'application/json'});
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = 'polza-ai-action-log-' + new Date().toISOString().slice(0, 10) + '.json';
-      document.body.appendChild(link);
-      link.click();
-      setTimeout(() => {
-        URL.revokeObjectURL(url);
-        parent.postMessage({pluginMessage: {type: 'export-action-log-finished'}}, '*');
-      }, 100);
+      const fileName = 'polza-ai-action-log-' + new Date().toISOString().slice(0, 10) + '.json';
+      const downloadButton = document.getElementById('download');
+      const closeButton = document.getElementById('close');
+      const status = document.getElementById('status');
+
+      document.getElementById('size').textContent = formatBytes(blob.size);
+
+      downloadButton.addEventListener('click', () => {
+        setBusy(true);
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = fileName;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        setStatus('Загрузка запущена. Проверьте папку Downloads.');
+        finish('download');
+      });
+
+      closeButton.addEventListener('click', () => {
+        parent.postMessage({pluginMessage: {type: 'export-action-log-cancelled'}}, '*');
+      });
+
+      function finish(method) {
+        setTimeout(() => {
+          parent.postMessage({pluginMessage: {type: 'export-action-log-finished', method, fileName}}, '*');
+        }, 300);
+      }
+
+      function setBusy(value) {
+        downloadButton.disabled = value;
+      }
+
+      function setStatus(message, isError = false) {
+        status.textContent = message;
+        status.className = isError ? 'error' : '';
+      }
+
+      function formatBytes(bytes) {
+        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+        return (bytes / 1024 / 1024).toFixed(2) + ' MB';
+      }
     </script>`,
-    {width: 1, height: 1},
+    {width: 380, height: 285},
   );
-  figma.ui.onmessage = () => {
-    figma.notify(`Usage log exported: ${entries.length} events`);
-    figma.closePlugin();
+  figma.ui.onmessage = (message: {type?: string; method?: string; fileName?: string}) => {
+    if (message.type === 'export-action-log-finished') {
+      figma.notify(`Usage log exported: ${entries.length} events`);
+      figma.closePlugin();
+      return;
+    }
+
+    if (message.type === 'export-action-log-cancelled') {
+      figma.closePlugin();
+    }
   };
 }
 
@@ -743,12 +868,12 @@ async function resolvePolzaPayload(payload: PolzaImageResponse, apiKey: string):
 
     const statusPayload = await fetchPolzaMediaStatus(requestId, apiKey);
 
-    if (statusPayload.status === 'failed') {
-      throw new Error(getPolzaErrorMessage(statusPayload));
+    if (extractImageSource(statusPayload)) {
+      return statusPayload;
     }
 
-    if (statusPayload.status === 'completed' || extractImageSource(statusPayload)) {
-      return statusPayload;
+    if (statusPayload.status === 'failed') {
+      throw new Error(getPolzaErrorMessage(statusPayload));
     }
   }
 
@@ -757,6 +882,8 @@ async function resolvePolzaPayload(payload: PolzaImageResponse, apiKey: string):
 
 async function fetchPolzaMediaStatus(requestId: string, apiKey: string): Promise<PolzaImageResponse> {
   let lastError = '';
+  let pendingPayload: PolzaImageResponse | null = null;
+  let failedPayload: PolzaImageResponse | null = null;
 
   for (const endpoint of POLZA_MEDIA_ENDPOINTS) {
     const response = await fetch(`${endpoint}/${requestId}`, {
@@ -768,10 +895,30 @@ async function fetchPolzaMediaStatus(requestId: string, apiKey: string): Promise
     const responseText = await response.text();
 
     if (response.ok) {
-      return JSON.parse(responseText) as PolzaImageResponse;
+      const statusPayload = JSON.parse(responseText) as PolzaImageResponse;
+
+      if (extractImageSource(statusPayload)) {
+        return statusPayload;
+      }
+
+      if (statusPayload.status === 'failed') {
+        failedPayload = statusPayload;
+      } else {
+        pendingPayload = statusPayload;
+      }
+
+      continue;
     }
 
     lastError = `${response.status}: ${responseText.slice(0, 160)}`;
+  }
+
+  if (pendingPayload) {
+    return pendingPayload;
+  }
+
+  if (failedPayload) {
+    return failedPayload;
   }
 
   throw new Error(`Polza AI status check failed: ${lastError}`);
@@ -810,9 +957,7 @@ function getPolzaErrorMessage(payload: PolzaImageResponse): string {
 }
 
 async function fetchImageBytes(url: string): Promise<Uint8Array> {
-  const parsedUrl = new URL(url);
-
-  if (parsedUrl.protocol !== 'https:' || !ALLOWED_IMAGE_HOSTS.has(parsedUrl.hostname.toLowerCase())) {
+  if (!isAllowedImageUrl(url)) {
     throw new Error('Image download host is not allowed');
   }
 
@@ -822,63 +967,37 @@ async function fetchImageBytes(url: string): Promise<Uint8Array> {
     throw new Error(`Image download failed ${response.status}`);
   }
 
-  const finalUrl = new URL(response.url);
-
-  if (finalUrl.protocol !== 'https:' || !ALLOWED_IMAGE_HOSTS.has(finalUrl.hostname.toLowerCase())) {
+  if (response.url && !isAllowedImageUrl(response.url)) {
     throw new Error('Image download redirected to an untrusted host');
   }
 
-  const contentLength = Number(response.headers.get('content-length') ?? 0);
+  const bytes = new Uint8Array(await response.arrayBuffer());
 
-  if (contentLength > MAX_GENERATED_IMAGE_BYTES) {
+  if (bytes.length > MAX_GENERATED_IMAGE_BYTES) {
     throw new Error('Generated image is too large');
   }
-
-  const bytes = await readResponseBytesWithLimit(response, MAX_GENERATED_IMAGE_BYTES);
 
   assertSupportedImageBytes(bytes);
   return bytes;
 }
 
-async function readResponseBytesWithLimit(response: Response, maxBytes: number): Promise<Uint8Array> {
-  if (!response.body) {
-    throw new Error('Image response has no body');
-  }
+function isAllowedImageUrl(value: string): boolean {
+  const normalizedUrl = value.trim().toLowerCase();
 
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let totalBytes = 0;
+  for (const hostname of ALLOWED_IMAGE_HOSTS) {
+    const origin = `https://${hostname}`;
 
-  try {
-    while (true) {
-      const {done, value} = await reader.read();
-
-      if (done) {
-        break;
-      }
-
-      totalBytes += value.byteLength;
-
-      if (totalBytes > maxBytes) {
-        await reader.cancel();
-        throw new Error('Generated image is too large');
-      }
-
-      chunks.push(value);
+    if (
+      normalizedUrl === origin ||
+      normalizedUrl.startsWith(`${origin}/`) ||
+      normalizedUrl.startsWith(`${origin}?`) ||
+      normalizedUrl.startsWith(`${origin}#`)
+    ) {
+      return true;
     }
-  } finally {
-    reader.releaseLock();
   }
 
-  const bytes = new Uint8Array(totalBytes);
-  let offset = 0;
-
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-
-  return bytes;
+  return false;
 }
 
 function dataUrlOrBase64ToBytes(value: string, maxBytes = MAX_GENERATED_IMAGE_BYTES): Uint8Array {
