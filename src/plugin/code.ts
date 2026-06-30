@@ -57,6 +57,11 @@ type ShimmerAnimation = {
   remove: () => void;
 };
 
+type ImageDimensions = {
+  width: number;
+  height: number;
+};
+
 type UiMessage =
   | GenerateImageMessage
   | SaveApiKeyMessage
@@ -314,12 +319,14 @@ async function insertImageBytes(imageBytes: Uint8Array, prompt: string): Promise
   const image = figma.createImage(imageBytes);
   const node = figma.createRectangle();
   const bounds = figma.viewport.bounds;
-  const size = 512;
+  const dimensions = getImageDimensions(imageBytes);
+  const width = dimensions?.width ?? 512;
+  const height = dimensions?.height ?? 512;
 
   node.name = `Polza AI - ${prompt.slice(0, 40)}`;
-  node.resize(size, size);
-  node.x = bounds.x + bounds.width / 2 - size / 2;
-  node.y = bounds.y + bounds.height / 2 - size / 2;
+  node.resize(width, height);
+  node.x = bounds.x + bounds.width / 2 - width / 2;
+  node.y = bounds.y + bounds.height / 2 - height / 2;
   node.fills = [
     {
       type: 'IMAGE',
@@ -335,10 +342,18 @@ async function insertImageBytes(imageBytes: Uint8Array, prompt: string): Promise
 
 async function paintNodeWithImage(node: RectangleNode, imageBytes: Uint8Array, prompt: string): Promise<void> {
   const image = figma.createImage(imageBytes);
+  const dimensions = getImageDimensions(imageBytes);
+  const centerX = node.x + node.width / 2;
+  const centerY = node.y + node.height / 2;
 
   node.name = `Polza AI - ${prompt.slice(0, 40)}`;
   node.opacity = 1;
   node.cornerRadius = 0;
+  if (dimensions) {
+    node.resize(dimensions.width, dimensions.height);
+    node.x = centerX - dimensions.width / 2;
+    node.y = centerY - dimensions.height / 2;
+  }
   node.fills = [
     {
       type: 'IMAGE',
@@ -499,6 +514,128 @@ function getNodeWidth(node: SceneNode): number {
 
 function getNodeHeight(node: SceneNode): number {
   return 'height' in node ? Math.max(1, node.height) : 512;
+}
+
+function getImageDimensions(imageBytes: Uint8Array): ImageDimensions | null {
+  return getPngDimensions(imageBytes) ?? getJpegDimensions(imageBytes) ?? getWebpDimensions(imageBytes);
+}
+
+function getPngDimensions(imageBytes: Uint8Array): ImageDimensions | null {
+  const pngSignature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+
+  if (imageBytes.length < 24 || !pngSignature.every((byte, index) => imageBytes[index] === byte)) {
+    return null;
+  }
+
+  return {
+    width: readUint32BigEndian(imageBytes, 16),
+    height: readUint32BigEndian(imageBytes, 20),
+  };
+}
+
+function getJpegDimensions(imageBytes: Uint8Array): ImageDimensions | null {
+  if (imageBytes.length < 4 || imageBytes[0] !== 0xff || imageBytes[1] !== 0xd8) {
+    return null;
+  }
+
+  let offset = 2;
+
+  while (offset + 9 < imageBytes.length) {
+    if (imageBytes[offset] !== 0xff) {
+      offset += 1;
+      continue;
+    }
+
+    const marker = imageBytes[offset + 1];
+
+    if (marker === 0xda || marker === 0xd9) {
+      return null;
+    }
+
+    const segmentLength = readUint16BigEndian(imageBytes, offset + 2);
+
+    if (segmentLength < 2 || offset + 2 + segmentLength > imageBytes.length) {
+      return null;
+    }
+
+    if (isJpegStartOfFrameMarker(marker)) {
+      return {
+        height: readUint16BigEndian(imageBytes, offset + 5),
+        width: readUint16BigEndian(imageBytes, offset + 7),
+      };
+    }
+
+    offset += 2 + segmentLength;
+  }
+
+  return null;
+}
+
+function getWebpDimensions(imageBytes: Uint8Array): ImageDimensions | null {
+  if (
+    imageBytes.length < 30 ||
+    readAscii(imageBytes, 0, 4) !== 'RIFF' ||
+    readAscii(imageBytes, 8, 4) !== 'WEBP'
+  ) {
+    return null;
+  }
+
+  const chunkType = readAscii(imageBytes, 12, 4);
+
+  if (chunkType === 'VP8X') {
+    return {
+      width: 1 + readUint24LittleEndian(imageBytes, 24),
+      height: 1 + readUint24LittleEndian(imageBytes, 27),
+    };
+  }
+
+  if (chunkType === 'VP8 ' && imageBytes.length >= 30) {
+    return {
+      width: readUint16LittleEndian(imageBytes, 26) & 0x3fff,
+      height: readUint16LittleEndian(imageBytes, 28) & 0x3fff,
+    };
+  }
+
+  if (chunkType === 'VP8L' && imageBytes.length >= 25) {
+    const bits =
+      imageBytes[21] | (imageBytes[22] << 8) | (imageBytes[23] << 16) | (imageBytes[24] << 24);
+
+    return {
+      width: (bits & 0x3fff) + 1,
+      height: ((bits >> 14) & 0x3fff) + 1,
+    };
+  }
+
+  return null;
+}
+
+function isJpegStartOfFrameMarker(marker: number): boolean {
+  return (
+    (marker >= 0xc0 && marker <= 0xc3) ||
+    (marker >= 0xc5 && marker <= 0xc7) ||
+    (marker >= 0xc9 && marker <= 0xcb) ||
+    (marker >= 0xcd && marker <= 0xcf)
+  );
+}
+
+function readUint32BigEndian(bytes: Uint8Array, offset: number): number {
+  return bytes[offset] * 0x1000000 + ((bytes[offset + 1] << 16) | (bytes[offset + 2] << 8) | bytes[offset + 3]);
+}
+
+function readUint24LittleEndian(bytes: Uint8Array, offset: number): number {
+  return bytes[offset] | (bytes[offset + 1] << 8) | (bytes[offset + 2] << 16);
+}
+
+function readUint16BigEndian(bytes: Uint8Array, offset: number): number {
+  return (bytes[offset] << 8) | bytes[offset + 1];
+}
+
+function readUint16LittleEndian(bytes: Uint8Array, offset: number): number {
+  return bytes[offset] | (bytes[offset + 1] << 8);
+}
+
+function readAscii(bytes: Uint8Array, offset: number, length: number): string {
+  return String.fromCharCode(...bytes.slice(offset, offset + length));
 }
 
 function removeNode(node: SceneNode): void {
@@ -1140,8 +1277,12 @@ function normalizeModel(model: string): string {
     return 'openai/gpt-5.4-image-2';
   }
 
-  if (model === 'Gemini 3.1 Flash Image') {
-    return 'google/gemini-3.1-flash-image-preview';
+  if (model === 'Gemini 3 Pro Image Preview') {
+    return 'google/gemini-3-pro-image-preview';
+  }
+
+  if (model === 'Gemini 3.1 Flash Image (тест)') {
+    return 'google/gemini-3.1-flash-image';
   }
 
   return model;
