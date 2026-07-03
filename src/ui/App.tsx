@@ -37,8 +37,6 @@ type PluginMessage =
 const modelOptions = [
   'Nano Banana 2',
   'GPT Image 2',
-  'Gemini 3 Pro Image Preview',
-  'Gemini 3.1 Flash Image (тест)',
 ];
 const qualityOptions: ImageQuality[] = ['1K', '2K', '4K'];
 const MAX_REFERENCE_COUNT = 6;

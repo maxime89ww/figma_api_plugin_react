@@ -1277,14 +1277,6 @@ function normalizeModel(model: string): string {
     return 'openai/gpt-5.4-image-2';
   }
 
-  if (model === 'Gemini 3 Pro Image Preview') {
-    return 'google/gemini-3-pro-image-preview';
-  }
-
-  if (model === 'Gemini 3.1 Flash Image (тест)') {
-    return 'google/gemini-3.1-flash-image';
-  }
-
   return model;
 }
 
