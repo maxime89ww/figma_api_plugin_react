@@ -34,7 +34,10 @@ type PluginMessage =
   | {type: 'selection-reference-updated'; reference: ReferenceImage | null}
   | {type: 'generation-started' | 'generation-finished' | 'generation-error'; message?: string};
 
-const modelOptions = ['Nano Banana 2', 'GPT Image 2'];
+const modelOptions = [
+  'Nano Banana 2',
+  'GPT Image 2',
+];
 const qualityOptions: ImageQuality[] = ['1K', '2K', '4K'];
 const MAX_REFERENCE_COUNT = 6;
 const MAX_REFERENCE_BYTES = 20 * 1024 * 1024;
