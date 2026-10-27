@@ -1,7 +1,7 @@
 # See https://docs.github.com/get-started/getting-started-with-git/ignoring-files for more about ignoring files.
 
-# Compiled output
-/dist
+# Generated UI intermediates; the ready-to-run plugin is committed
+/dist/ui-build
 /tmp
 /out-tsc
 /bazel-out

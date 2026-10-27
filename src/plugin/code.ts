@@ -71,23 +71,19 @@ type UiMessage =
   | {type: 'request-history'}
   | {type: 'resize-ui'; height: number};
 
+type PolzaImageValue = string | {url?: string; b64_json?: string; images?: PolzaImageValue[]; output?: PolzaImageValue | PolzaImageValue[]};
+
 type PolzaImageResponse = {
   id?: string;
   requestId?: string;
-  status?: 'pending' | 'processing' | 'completed' | 'failed';
+  taskId?: string;
+  warnings?: string[];
+  status?: 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled';
   error?: string | {message?: string};
-  data?:
-    | string
-    | Array<
-        | string
-        | {
-            b64_json?: string;
-            url?: string;
-          }
-      >;
+  data?: PolzaImageValue | PolzaImageValue[];
   image?: string;
-  images?: Array<string | {url?: string; b64_json?: string}>;
-  output?: Array<{url?: string; b64_json?: string}>;
+  images?: PolzaImageValue[];
+  output?: PolzaImageValue | PolzaImageValue[];
   url?: string;
   b64_json?: string;
 };
@@ -99,9 +95,8 @@ const ACTION_LOG_STORAGE_KEY = 'polza-ai-action-log-v1';
 const HISTORY_LIMIT = 24;
 const ACTION_LOG_LIMIT = 5000;
 const POLZA_MEDIA_ENDPOINT = 'https://polza.ai/api/v1/media';
-const POLZA_MEDIA_ENDPOINTS = ['https://polza.ai/api/v1/media', 'https://polza.ai/api/v2/media'];
 const POLZA_POLL_INTERVAL_MS = 3500;
-const POLZA_POLL_TIMEOUT_MS = 125000;
+const POLZA_POLL_TIMEOUT_MS = 10 * 60 * 1000;
 const ALLOWED_IMAGE_HOSTS = new Set(['polza.ai', 's3.polza.ai']);
 const MAX_REFERENCE_COUNT = 6;
 const MAX_REFERENCE_BYTES = 20 * 1024 * 1024;
@@ -240,6 +235,7 @@ async function generateAndInsertImage(message: GenerateImageMessage, apiKey: str
   await logAction('generation_started', {
     model: message.model,
     normalizedModel: normalizeModel(message.model),
+    aspectRatio: getPromptAspectRatio(message.prompt, message.model),
     quality: getImageQuality(message),
     promptLength: message.prompt.length,
     referencesCount: message.references.length,
@@ -255,6 +251,14 @@ async function generateAndInsertImage(message: GenerateImageMessage, apiKey: str
       references: message.references,
     });
 
+    const dimensions = getImageDimensions(generated.bytes);
+    await logAction('provider_image_received', {
+      quality: getImageQuality(message),
+      aspectRatio: getPromptAspectRatio(message.prompt, message.model),
+      width: dimensions?.width ?? 0,
+      height: dimensions?.height ?? 0,
+      imageBytes: generated.bytes.length,
+    });
     await indicator.complete(generated.bytes, message.prompt);
     indicatorCompleted = true;
     await logAction('image_inserted', {
@@ -661,9 +665,9 @@ async function generateImageWithPolza(options: {
       model: options.model,
       input: {
         prompt: options.prompt,
-        aspect_ratio: '1:1',
+        aspect_ratio: getPromptAspectRatio(options.prompt, options.model),
         image_resolution: options.quality,
-        n: 1,
+        max_images: 1,
         output_format: 'png',
         images: options.references.map((reference) => ({
           type: 'base64',
@@ -681,6 +685,14 @@ async function generateImageWithPolza(options: {
   }
 
   const payload = JSON.parse(responseText) as PolzaImageResponse;
+  await logAction('provider_request_accepted', {
+    requestId: payload.requestId || payload.id || payload.taskId || '',
+    status: payload.status || 'unknown',
+    model: options.model,
+    quality: options.quality,
+    aspectRatio: getPromptAspectRatio(options.prompt, options.model),
+  });
+  await logPolzaWarnings(payload);
   const completedPayload = await resolvePolzaPayload(payload, options.apiKey);
   const imageSource = extractImageSource(completedPayload);
 
@@ -987,98 +999,87 @@ async function exportActionLog(): Promise<void> {
   };
 }
 
+async function logPolzaWarnings(payload: PolzaImageResponse): Promise<void> {
+  if (payload.warnings?.length) {
+    const warnings = payload.warnings.join('; ').slice(0, 600);
+    await logAction('provider_warning', {warnings});
+    figma.notify(`Polza AI: ${warnings}`, {timeout: 6000});
+  }
+}
+
+function assertPolzaResult(payload: PolzaImageResponse, requestId: string): void {
+  if (payload.status === 'failed' || payload.status === 'cancelled' || payload.error) {
+    throw new Error(`${getPolzaErrorMessage(payload)} (requestId: ${requestId || 'unknown'})`);
+  }
+  if (payload.status === 'completed' && !extractImageSource(payload)) {
+    throw new Error(`Polza AI completed without an image (requestId: ${requestId || 'unknown'})`);
+  }
+}
+
 async function resolvePolzaPayload(payload: PolzaImageResponse, apiKey: string): Promise<PolzaImageResponse> {
-  if (extractImageSource(payload)) {
-    return payload;
-  }
-
-  const requestId = payload.requestId || payload.id;
-
-  if (!requestId) {
-    return payload;
-  }
+  const requestId = payload.requestId || payload.id || payload.taskId || '';
+  assertPolzaResult(payload, requestId);
+  if (extractImageSource(payload)) return payload;
+  if (!requestId) throw new Error('Polza AI response contains neither an image nor a task ID');
 
   const startedAt = Date.now();
-
+  let lastStatus: string = payload.status || 'unknown';
   while (Date.now() - startedAt < POLZA_POLL_TIMEOUT_MS) {
     await delay(POLZA_POLL_INTERVAL_MS);
-
     const statusPayload = await fetchPolzaMediaStatus(requestId, apiKey);
-
-    if (extractImageSource(statusPayload)) {
-      return statusPayload;
+    if (statusPayload.status !== lastStatus) {
+      lastStatus = statusPayload.status || 'unknown';
+      await logAction('provider_status', {requestId, status: lastStatus, elapsedMs: Date.now() - startedAt});
     }
-
-    if (statusPayload.status === 'failed') {
-      throw new Error(getPolzaErrorMessage(statusPayload));
-    }
+    await logPolzaWarnings(statusPayload);
+    assertPolzaResult(statusPayload, requestId);
+    if (extractImageSource(statusPayload)) return statusPayload;
   }
 
-  throw new Error('Polza AI generation timed out');
+  await logAction('provider_poll_timeout', {requestId, status: lastStatus, elapsedMs: Date.now() - startedAt});
+  throw new Error(`Polza AI: ожидание остановлено через 10 минут. Задача может продолжать выполняться. Проверьте её в кабинете перед повтором (requestId: ${requestId}, status: ${lastStatus})`);
 }
 
 async function fetchPolzaMediaStatus(requestId: string, apiKey: string): Promise<PolzaImageResponse> {
-  let lastError = '';
-  let pendingPayload: PolzaImageResponse | null = null;
-  let failedPayload: PolzaImageResponse | null = null;
-
-  for (const endpoint of POLZA_MEDIA_ENDPOINTS) {
-    const response = await fetch(`${endpoint}/${requestId}`, {
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-      },
-    });
-
-    const responseText = await response.text();
-
-    if (response.ok) {
-      const statusPayload = JSON.parse(responseText) as PolzaImageResponse;
-
-      if (extractImageSource(statusPayload)) {
-        return statusPayload;
-      }
-
-      if (statusPayload.status === 'failed') {
-        failedPayload = statusPayload;
-      } else {
-        pendingPayload = statusPayload;
-      }
-
-      continue;
-    }
-
-    lastError = `${response.status}: ${responseText.slice(0, 160)}`;
+  const response = await fetch(`${POLZA_MEDIA_ENDPOINT}/${encodeURIComponent(requestId)}`, {
+    headers: {Authorization: `Bearer ${apiKey}`},
+  });
+  const responseText = await response.text();
+  if (!response.ok) {
+    throw new Error(`Polza AI status check failed ${response.status} (requestId: ${requestId}): ${responseText.slice(0, 160)}`);
   }
-
-  if (pendingPayload) {
-    return pendingPayload;
-  }
-
-  if (failedPayload) {
-    return failedPayload;
-  }
-
-  throw new Error(`Polza AI status check failed: ${lastError}`);
+  return JSON.parse(responseText) as PolzaImageResponse;
 }
 
 function extractImageSource(payload: PolzaImageResponse): string | null {
-  const firstData = Array.isArray(payload.data) ? payload.data[0] : payload.data;
-  const firstImage = payload.images?.[0];
-  const firstOutput = payload.output?.[0];
+  function readImage(value: PolzaImageValue | PolzaImageValue[] | undefined, depth = 0): string | null {
+    if (!value || depth > 4) return null;
+    if (typeof value === 'string') return value;
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const source = readImage(item, depth + 1);
+        if (source) return source;
+      }
+      return null;
+    }
+    return value.b64_json || value.url || readImage(value.images, depth + 1) || readImage(value.output, depth + 1);
+  }
+  return readImage(payload.data) || readImage(payload.images) || readImage(payload.output) || payload.b64_json || payload.image || payload.url || null;
+}
 
-  if (typeof firstData === 'string') return firstData;
-  if (firstData?.b64_json) return firstData.b64_json;
-  if (firstData?.url) return firstData.url;
-  if (typeof firstImage === 'string') return firstImage;
-  if (firstImage?.b64_json) return firstImage.b64_json;
-  if (firstImage?.url) return firstImage.url;
-  if (firstOutput?.b64_json) return firstOutput.b64_json;
-  if (firstOutput?.url) return firstOutput.url;
-  if (payload.b64_json) return payload.b64_json;
-  if (payload.image) return payload.image;
-  if (payload.url) return payload.url;
-
-  return null;
+// Explicit ratios in the prompt override auto. Without one, let the provider
+// preserve the reference proportions or choose a suitable composition.
+function getPromptAspectRatio(prompt: string, model = ''): string {
+  const supported = new Set(['1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9']);
+  if (normalizeModel(model) === 'google/gemini-nano-banana-2.1') {
+    for (const ratio of ['1:4', '4:1', '1:8', '8:1']) supported.add(ratio);
+  }
+  const matches = Array.from(prompt.matchAll(/(?:^|[^\d])(\d{1,2})\s*[:：xх×]\s*(\d{1,2})(?!\d)/gi));
+  for (let index = matches.length - 1; index >= 0; index -= 1) {
+    const ratio = `${Number(matches[index][1])}:${Number(matches[index][2])}`;
+    if (supported.has(ratio)) return ratio;
+  }
+  return 'auto';
 }
 
 function getPolzaErrorMessage(payload: PolzaImageResponse): string {
@@ -1090,7 +1091,7 @@ function getPolzaErrorMessage(payload: PolzaImageResponse): string {
     return payload.error.message;
   }
 
-  return 'Polza AI generation failed';
+  return payload.status === 'cancelled' ? 'Polza AI generation cancelled' : 'Polza AI generation failed';
 }
 
 async function fetchImageBytes(url: string): Promise<Uint8Array> {
@@ -1269,6 +1270,10 @@ function errorToMessage(error: unknown): string {
 }
 
 function normalizeModel(model: string): string {
+  if (model === 'Nano Banana 2.1') {
+    return 'google/gemini-nano-banana-2.1';
+  }
+
   if (model === 'Nano Banana 2') {
     return 'google/gemini-3.1-flash-image-preview';
   }

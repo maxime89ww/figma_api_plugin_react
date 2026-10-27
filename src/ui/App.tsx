@@ -36,6 +36,7 @@ type PluginMessage =
 
 const modelOptions = [
   'Nano Banana 2',
+  'Nano Banana 2.1',
   'GPT Image 2',
 ];
 const qualityOptions: ImageQuality[] = ['1K', '2K', '4K'];

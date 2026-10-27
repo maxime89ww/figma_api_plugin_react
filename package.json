@@ -7,7 +7,7 @@
     "build:ui": "vite build && node scripts/inline-ui.mjs",
     "build:plugin": "node scripts/build-plugin.mjs",
     "watch": "vite build --watch",
-    "test": "tsc --noEmit"
+    "test": "tsc --noEmit && node scripts/test-provider.mjs"
   },
   "private": true,
   "packageManager": "npm@11.11.0",
