@@ -29,7 +29,7 @@
 html,
 body,
 #root {
-  width: 503px;
+  width: 100%;
   height: 100vh;
   margin: 0;
   overflow: hidden;
@@ -46,7 +46,7 @@ textarea {
 .generator-shell {
   position: relative;
   display: grid;
-  width: 503px;
+  width: 100%;
   height: 100vh;
   margin: 0;
   padding: 32px 32px 12px;
@@ -72,7 +72,7 @@ textarea {
   display: grid;
   grid-template-rows: 79px 49px;
   gap: 0;
-  width: 439px;
+  width: 100%;
   height: 136px;
   padding: 0 0 8px;
   border-radius: 16px;
@@ -234,8 +234,8 @@ textarea::placeholder {
   position: relative;
   z-index: 2;
   display: grid;
-  grid-template-columns: minmax(80px, 1fr) 72px 62px 30px 30px 30px 78px;
-  gap: 4px;
+  grid-template-columns: minmax(140px, 1fr) 78px 70px 30px 30px 30px 84px;
+  gap: 8px;
   align-items: center;
   overflow: visible;
   padding: 0 8px;
@@ -281,7 +281,7 @@ textarea::placeholder {
   display: grid;
   grid-template-columns: 1fr 8px;
   width: auto;
-  max-width: 132px;
+  max-width: none;
   height: 30px;
   min-width: 0;
   padding: 0 8px 0 12px;
@@ -308,7 +308,7 @@ textarea::placeholder {
 }
 
 .model-trigger span {
-  max-width: 88px;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -350,7 +350,7 @@ textarea::placeholder {
 .quality-control {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  width: 72px;
+  width: 78px;
   height: 30px;
   overflow: hidden;
   border: 1px solid rgb(181 181 181 / 30%);
@@ -469,7 +469,7 @@ textarea::placeholder {
 .api-screen {
   position: relative;
   display: grid;
-  width: 439px;
+  width: 100%;
   height: 185px;
   padding: 16px 16px 0;
   border: 1px solid rgb(181 181 181 / 30%);
@@ -676,7 +676,7 @@ textarea::placeholder {
 }
 
 .aspect-ratio-control {
-  width: 62px;
+  width: 70px;
   min-width: 0;
   height: 30px;
   padding: 0 4px;

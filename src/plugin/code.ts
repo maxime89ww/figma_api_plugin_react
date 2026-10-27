@@ -98,7 +98,8 @@ const HISTORY_STORAGE_KEY = 'polza-ai-generation-history';
 const ACTION_LOG_STORAGE_KEY = 'polza-ai-action-log-v1';
 const HISTORY_LIMIT = 24;
 const ACTION_LOG_LIMIT = 5000;
-const PLUGIN_BUILD = '2026-10-27.3';
+const PLUGIN_BUILD = '2026-10-27.4';
+const PLUGIN_UI_WIDTH = 600;
 const POLZA_MEDIA_ENDPOINT = 'https://polza.ai/api/v1/media';
 const POLZA_POLL_INTERVAL_MS = 3500;
 const POLZA_POLL_TIMEOUT_MS = 10 * 60 * 1000;
@@ -110,7 +111,7 @@ const MAX_GENERATED_IMAGE_BYTES = 40 * 1024 * 1024;
 let lastSelectionImageKey = '';
 
 figma.showUI(__html__, {
-  width: 503,
+  width: PLUGIN_UI_WIDTH,
   height: 200,
   themeColors: true,
 });
@@ -137,7 +138,7 @@ figma.ui.onmessage = async (message: UiMessage) => {
     }
 
     if (message.type === 'resize-ui') {
-      figma.ui.resize(503, message.height);
+      figma.ui.resize(PLUGIN_UI_WIDTH, message.height);
       return;
     }
 
