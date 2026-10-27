@@ -7,6 +7,7 @@
   var ACTION_LOG_STORAGE_KEY = "polza-ai-action-log-v1";
   var HISTORY_LIMIT = 24;
   var ACTION_LOG_LIMIT = 5e3;
+  var PLUGIN_BUILD = "2026-10-27.2";
   var POLZA_MEDIA_ENDPOINT = "https://polza.ai/api/v1/media";
   var POLZA_POLL_INTERVAL_MS = 3500;
   var POLZA_POLL_TIMEOUT_MS = 10 * 60 * 1e3;
@@ -148,6 +149,7 @@ Error generating stack: \`+u.message+\`
     figma.ui.postMessage({ type: "generation-started" });
     figma.notify(`Generating with Polza AI: ${message.prompt.slice(0, 72)}`);
     await logAction("generation_started", {
+      build: PLUGIN_BUILD,
       model: message.model,
       normalizedModel: normalizeModel(message.model),
       aspectRatio: getPromptAspectRatio(message.prompt, message.model),
@@ -857,10 +859,18 @@ Error generating stack: \`+u.message+\`
     if (normalizeModel(model) === "google/gemini-nano-banana-2.1") {
       for (const ratio of ["1:4", "4:1", "1:8", "8:1"]) supported.add(ratio);
     }
-    const matches = Array.from(prompt.matchAll(/(?:^|[^\d])(\d{1,2})\s*[:：xх×]\s*(\d{1,2})(?!\d)/gi));
+    const matches = Array.from(prompt.matchAll(/(?:^|[^\d])(\d{1,5})\s*(?:[:：xх×*]|на)\s*(\d{1,5})(?!\d)/gi));
     for (let index = matches.length - 1; index >= 0; index -= 1) {
-      const ratio = `${Number(matches[index][1])}:${Number(matches[index][2])}`;
-      if (supported.has(ratio)) return ratio;
+      const width = Number(matches[index][1]);
+      const height = Number(matches[index][2]);
+      if (!width || !height) continue;
+      for (const ratio of supported) {
+        const [ratioWidth, ratioHeight] = ratio.split(":").map(Number);
+        if (width * ratioHeight === height * ratioWidth) return ratio;
+      }
+      if (width >= 32 && height >= 32) {
+        throw new Error(`\u041F\u0440\u043E\u043F\u043E\u0440\u0446\u0438\u0438 ${width}\xD7${height} \u043D\u0435 \u043F\u043E\u0434\u0434\u0435\u0440\u0436\u0438\u0432\u0430\u044E\u0442\u0441\u044F \u044D\u0442\u043E\u0439 \u043C\u043E\u0434\u0435\u043B\u044C\u044E. \u0423\u043A\u0430\u0436\u0438\u0442\u0435 \u043E\u0434\u0438\u043D \u0438\u0437 \u0444\u043E\u0440\u043C\u0430\u0442\u043E\u0432: ${Array.from(supported).join(", ")}. \u0422\u043E\u0447\u043D\u044B\u0439 \u0440\u0430\u0437\u043C\u0435\u0440 \u0432 \u043F\u0438\u043A\u0441\u0435\u043B\u044F\u0445 \u0442\u0440\u0435\u0431\u0443\u0435\u0442 \u043E\u0442\u0434\u0435\u043B\u044C\u043D\u043E\u0433\u043E \u0440\u0435\u0441\u0430\u0439\u0437\u0430.`);
+      }
     }
     return "auto";
   }
@@ -957,6 +967,7 @@ Error generating stack: \`+u.message+\`
     }, 0);
   }
   function validateGenerationRequest(message) {
+    getPromptAspectRatio(message.prompt, message.model);
     if (message.references.length > MAX_REFERENCE_COUNT) {
       throw new Error(`A maximum of ${MAX_REFERENCE_COUNT} reference images is allowed`);
     }

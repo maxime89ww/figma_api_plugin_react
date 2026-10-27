@@ -94,6 +94,7 @@ const HISTORY_STORAGE_KEY = 'polza-ai-generation-history';
 const ACTION_LOG_STORAGE_KEY = 'polza-ai-action-log-v1';
 const HISTORY_LIMIT = 24;
 const ACTION_LOG_LIMIT = 5000;
+const PLUGIN_BUILD = '2026-10-27.2';
 const POLZA_MEDIA_ENDPOINT = 'https://polza.ai/api/v1/media';
 const POLZA_POLL_INTERVAL_MS = 3500;
 const POLZA_POLL_TIMEOUT_MS = 10 * 60 * 1000;
@@ -233,6 +234,7 @@ async function generateAndInsertImage(message: GenerateImageMessage, apiKey: str
   figma.ui.postMessage({type: 'generation-started'});
   figma.notify(`Generating with Polza AI: ${message.prompt.slice(0, 72)}`);
   await logAction('generation_started', {
+    build: PLUGIN_BUILD,
     model: message.model,
     normalizedModel: normalizeModel(message.model),
     aspectRatio: getPromptAspectRatio(message.prompt, message.model),
@@ -1067,17 +1069,25 @@ function extractImageSource(payload: PolzaImageResponse): string | null {
   return readImage(payload.data) || readImage(payload.images) || readImage(payload.output) || payload.b64_json || payload.image || payload.url || null;
 }
 
-// Explicit ratios in the prompt override auto. Without one, let the provider
-// preserve the reference proportions or choose a suitable composition.
+// Pixel dimensions set the proportions, not the provider's native output size.
+// Compare fractions so 1200x900 maps to 4:3 and 2520x1080 maps to 21:9.
 function getPromptAspectRatio(prompt: string, model = ''): string {
   const supported = new Set(['1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9']);
   if (normalizeModel(model) === 'google/gemini-nano-banana-2.1') {
     for (const ratio of ['1:4', '4:1', '1:8', '8:1']) supported.add(ratio);
   }
-  const matches = Array.from(prompt.matchAll(/(?:^|[^\d])(\d{1,2})\s*[:：xх×]\s*(\d{1,2})(?!\d)/gi));
+  const matches = Array.from(prompt.matchAll(/(?:^|[^\d])(\d{1,5})\s*(?:[:：xх×*]|на)\s*(\d{1,5})(?!\d)/gi));
   for (let index = matches.length - 1; index >= 0; index -= 1) {
-    const ratio = `${Number(matches[index][1])}:${Number(matches[index][2])}`;
-    if (supported.has(ratio)) return ratio;
+    const width = Number(matches[index][1]);
+    const height = Number(matches[index][2]);
+    if (!width || !height) continue;
+    for (const ratio of supported) {
+      const [ratioWidth, ratioHeight] = ratio.split(':').map(Number);
+      if (width * ratioHeight === height * ratioWidth) return ratio;
+    }
+    if (width >= 32 && height >= 32) {
+      throw new Error(`Пропорции ${width}×${height} не поддерживаются этой моделью. Укажите один из форматов: ${Array.from(supported).join(', ')}. Точный размер в пикселях требует отдельного ресайза.`);
+    }
   }
   return 'auto';
 }
@@ -1222,6 +1232,8 @@ function getReferencesBytesApprox(references: ReferenceImage[]): number {
 }
 
 function validateGenerationRequest(message: GenerateImageMessage): void {
+  // Fail before creating a loading node or submitting a paid generation.
+  getPromptAspectRatio(message.prompt, message.model);
   if (message.references.length > MAX_REFERENCE_COUNT) {
     throw new Error(`A maximum of ${MAX_REFERENCE_COUNT} reference images is allowed`);
   }
