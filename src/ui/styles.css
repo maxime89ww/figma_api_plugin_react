@@ -38,6 +38,7 @@ body,
 
 button,
 input,
+select,
 textarea {
   font: inherit;
 }
@@ -233,8 +234,8 @@ textarea::placeholder {
   position: relative;
   z-index: 2;
   display: grid;
-  grid-template-columns: auto 78px 30px 30px 30px 1fr auto;
-  gap: 8px;
+  grid-template-columns: minmax(80px, 1fr) 72px 62px 30px 30px 30px 78px;
+  gap: 4px;
   align-items: center;
   overflow: visible;
   padding: 0 8px;
@@ -349,7 +350,7 @@ textarea::placeholder {
 .quality-control {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  width: 78px;
+  width: 72px;
   height: 30px;
   overflow: hidden;
   border: 1px solid rgb(181 181 181 / 30%);
@@ -672,4 +673,39 @@ textarea::placeholder {
       0 2px 15px rgb(255 221 45 / 90%),
       0 -2px 15px rgb(139 92 246 / 90%);
   }
+}
+
+.aspect-ratio-control {
+  width: 62px;
+  min-width: 0;
+  height: 30px;
+  padding: 0 4px;
+  border: 1px solid rgb(181 181 181 / 30%);
+  border-radius: 8px;
+  background: rgb(0 16 36 / 3%);
+  color: #333333;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.aspect-ratio-control:focus-visible {
+  outline: 2px solid #428bf9;
+  outline-offset: 2px;
+}
+
+.quality-option:disabled {
+  opacity: 0.4;
+  background: transparent;
+  cursor: default;
+}
+
+.model-control,
+.model-trigger span {
+  min-width: 0;
+}
+
+.model-trigger {
+  width: 100%;
+  padding-left: 8px;
 }

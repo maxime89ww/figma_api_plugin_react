@@ -1,5 +1,7 @@
 /// <reference types="@figma/plugin-typings" />
 
+import imageModels from '../shared/image-models.json';
+
 type ReferenceImage = {
   id?: number;
   name: string;
@@ -14,6 +16,7 @@ type GenerateImageMessage = {
   prompt: string;
   model: string;
   quality?: ImageQuality;
+  aspectRatio?: string;
   references: ReferenceImage[];
 };
 
@@ -22,6 +25,7 @@ type HistoryItem = {
   prompt: string;
   model: string;
   quality?: ImageQuality;
+  aspectRatio?: string;
   imageDataUrl: string;
   referenceDataUrl?: string;
   createdAt: number;
@@ -94,7 +98,7 @@ const HISTORY_STORAGE_KEY = 'polza-ai-generation-history';
 const ACTION_LOG_STORAGE_KEY = 'polza-ai-action-log-v1';
 const HISTORY_LIMIT = 24;
 const ACTION_LOG_LIMIT = 5000;
-const PLUGIN_BUILD = '2026-10-27.2';
+const PLUGIN_BUILD = '2026-10-27.3';
 const POLZA_MEDIA_ENDPOINT = 'https://polza.ai/api/v1/media';
 const POLZA_POLL_INTERVAL_MS = 3500;
 const POLZA_POLL_TIMEOUT_MS = 10 * 60 * 1000;
@@ -237,7 +241,7 @@ async function generateAndInsertImage(message: GenerateImageMessage, apiKey: str
     build: PLUGIN_BUILD,
     model: message.model,
     normalizedModel: normalizeModel(message.model),
-    aspectRatio: getPromptAspectRatio(message.prompt, message.model),
+    aspectRatio: getAspectRatio(message),
     quality: getImageQuality(message),
     promptLength: message.prompt.length,
     referencesCount: message.references.length,
@@ -250,13 +254,14 @@ async function generateAndInsertImage(message: GenerateImageMessage, apiKey: str
       prompt: message.prompt,
       model: normalizeModel(message.model),
       quality: getImageQuality(message),
+      aspectRatio: getAspectRatio(message),
       references: message.references,
     });
 
     const dimensions = getImageDimensions(generated.bytes);
     await logAction('provider_image_received', {
       quality: getImageQuality(message),
-      aspectRatio: getPromptAspectRatio(message.prompt, message.model),
+      aspectRatio: getAspectRatio(message),
       width: dimensions?.width ?? 0,
       height: dimensions?.height ?? 0,
       imageBytes: generated.bytes.length,
@@ -276,6 +281,7 @@ async function generateAndInsertImage(message: GenerateImageMessage, apiKey: str
       prompt: message.prompt,
       model: message.model,
       quality: getImageQuality(message),
+      aspectRatio: getAspectRatio(message),
       imageDataUrl: generated.dataUrl,
       createdAt: Date.now(),
     });
@@ -655,6 +661,7 @@ async function generateImageWithPolza(options: {
   prompt: string;
   model: string;
   quality: ImageQuality;
+  aspectRatio?: string;
   references: ReferenceImage[];
 }): Promise<{bytes: Uint8Array; dataUrl: string}> {
   const response = await fetch(POLZA_MEDIA_ENDPOINT, {
@@ -667,7 +674,7 @@ async function generateImageWithPolza(options: {
       model: options.model,
       input: {
         prompt: options.prompt,
-        aspect_ratio: getPromptAspectRatio(options.prompt, options.model),
+        aspect_ratio: getAspectRatio(options),
         image_resolution: options.quality,
         max_images: 1,
         output_format: 'png',
@@ -692,7 +699,7 @@ async function generateImageWithPolza(options: {
     status: payload.status || 'unknown',
     model: options.model,
     quality: options.quality,
-    aspectRatio: getPromptAspectRatio(options.prompt, options.model),
+    aspectRatio: getAspectRatio(options),
   });
   await logPolzaWarnings(payload);
   const completedPayload = await resolvePolzaPayload(payload, options.apiKey);
@@ -1069,27 +1076,16 @@ function extractImageSource(payload: PolzaImageResponse): string | null {
   return readImage(payload.data) || readImage(payload.images) || readImage(payload.output) || payload.b64_json || payload.image || payload.url || null;
 }
 
-// Pixel dimensions set the proportions, not the provider's native output size.
-// Compare fractions so 1200x900 maps to 4:3 and 2520x1080 maps to 21:9.
-function getPromptAspectRatio(prompt: string, model = ''): string {
-  const supported = new Set(['1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9']);
-  if (normalizeModel(model) === 'google/gemini-nano-banana-2.1') {
-    for (const ratio of ['1:4', '4:1', '1:8', '8:1']) supported.add(ratio);
+function getSupportedAspectRatios(model: string): string[] {
+  return imageModels.find((item) => item.name === model || item.id === model)?.aspectRatios ?? ['auto'];
+}
+
+function getAspectRatio(options: {model: string; aspectRatio?: string}): string {
+  const ratio = options.aspectRatio ?? 'auto';
+  if (!getSupportedAspectRatios(options.model).includes(ratio)) {
+    throw new Error(`Соотношение ${ratio} не поддерживается выбранной моделью. Выберите формат из списка.`);
   }
-  const matches = Array.from(prompt.matchAll(/(?:^|[^\d])(\d{1,5})\s*(?:[:：xх×*]|на)\s*(\d{1,5})(?!\d)/gi));
-  for (let index = matches.length - 1; index >= 0; index -= 1) {
-    const width = Number(matches[index][1]);
-    const height = Number(matches[index][2]);
-    if (!width || !height) continue;
-    for (const ratio of supported) {
-      const [ratioWidth, ratioHeight] = ratio.split(':').map(Number);
-      if (width * ratioHeight === height * ratioWidth) return ratio;
-    }
-    if (width >= 32 && height >= 32) {
-      throw new Error(`Пропорции ${width}×${height} не поддерживаются этой моделью. Укажите один из форматов: ${Array.from(supported).join(', ')}. Точный размер в пикселях требует отдельного ресайза.`);
-    }
-  }
-  return 'auto';
+  return ratio;
 }
 
 function getPolzaErrorMessage(payload: PolzaImageResponse): string {
@@ -1232,8 +1228,12 @@ function getReferencesBytesApprox(references: ReferenceImage[]): number {
 }
 
 function validateGenerationRequest(message: GenerateImageMessage): void {
-  // Fail before creating a loading node or submitting a paid generation.
-  getPromptAspectRatio(message.prompt, message.model);
+  // Validate settings before creating a loading node or a paid generation.
+  const ratio = getAspectRatio(message);
+  const model = imageModels.find((item) => item.id === normalizeModel(message.model));
+  if (model?.autoResolutionOnly1K && ratio === 'auto' && getImageQuality(message) !== '1K') {
+    throw new Error('Для GPT Image 2 формат «Авто» доступен только в 1K. Выберите соотношение сторон для 2K или 4K.');
+  }
   if (message.references.length > MAX_REFERENCE_COUNT) {
     throw new Error(`A maximum of ${MAX_REFERENCE_COUNT} reference images is allowed`);
   }
@@ -1282,19 +1282,7 @@ function errorToMessage(error: unknown): string {
 }
 
 function normalizeModel(model: string): string {
-  if (model === 'Nano Banana 2.1') {
-    return 'google/gemini-nano-banana-2.1';
-  }
-
-  if (model === 'Nano Banana 2') {
-    return 'google/gemini-3.1-flash-image-preview';
-  }
-
-  if (model === 'GPT Image 2') {
-    return 'openai/gpt-5.4-image-2';
-  }
-
-  return model;
+  return imageModels.find((item) => item.name === model)?.id ?? model;
 }
 
 function getImageQuality(message: GenerateImageMessage): ImageQuality {

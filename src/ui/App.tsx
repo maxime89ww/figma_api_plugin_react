@@ -1,3 +1,4 @@
+import imageModels from '../shared/image-models.json';
 import {ChangeEvent, DragEvent, MouseEvent, useEffect, useMemo, useRef, useState} from 'react';
 
 type ReferenceImage = {
@@ -14,6 +15,7 @@ type GenerateImageRequest = {
   prompt: string;
   model: string;
   quality: ImageQuality;
+  aspectRatio: string;
   references: ReferenceImage[];
 };
 
@@ -22,6 +24,7 @@ type HistoryItem = {
   prompt: string;
   model: string;
   quality?: ImageQuality;
+  aspectRatio?: string;
   imageDataUrl: string;
   referenceDataUrl?: string;
   createdAt: number;
@@ -34,11 +37,7 @@ type PluginMessage =
   | {type: 'selection-reference-updated'; reference: ReferenceImage | null}
   | {type: 'generation-started' | 'generation-finished' | 'generation-error'; message?: string};
 
-const modelOptions = [
-  'Nano Banana 2',
-  'Nano Banana 2.1',
-  'GPT Image 2',
-];
+const modelOptions = imageModels.map((item) => item.name);
 const qualityOptions: ImageQuality[] = ['1K', '2K', '4K'];
 const MAX_REFERENCE_COUNT = 6;
 const MAX_REFERENCE_BYTES = 20 * 1024 * 1024;
@@ -48,6 +47,7 @@ export function App() {
   const [prompt, setPrompt] = useState('');
   const [model, setModel] = useState('Nano Banana 2');
   const [quality, setQuality] = useState<ImageQuality>('1K');
+  const [aspectRatio, setAspectRatio] = useState('auto');
   const [isModelMenuOpen, setIsModelMenuOpen] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isApiKeyOpen, setIsApiKeyOpen] = useState(false);
@@ -65,6 +65,10 @@ export function App() {
     () => (selectedReference ? [selectedReference, ...references] : references),
     [references, selectedReference],
   );
+  const currentModel = imageModels.find((item) => item.name === model) ?? imageModels[0];
+  const aspectRatioOptions = currentModel.aspectRatios;
+  const selectedAspectRatio = aspectRatioOptions.includes(aspectRatio) ? aspectRatio : 'auto';
+  const isQualityLimited = currentModel.autoResolutionOnly1K && selectedAspectRatio === 'auto';
   const canGenerate = prompt.trim().length > 3 && !isGenerating;
   const isEditMode = Boolean(selectedReference);
 
@@ -183,7 +187,10 @@ export function App() {
     event.stopPropagation();
     setPrompt(item.prompt);
     setModel(item.model);
-    setQuality(item.quality ?? '1K');
+    const restoredModel = imageModels.find((entry) => entry.name === item.model) ?? imageModels[0];
+    const restoredRatio = item.aspectRatio && restoredModel.aspectRatios.includes(item.aspectRatio) ? item.aspectRatio : 'auto';
+    setAspectRatio(restoredRatio);
+    setQuality(restoredModel.autoResolutionOnly1K && restoredRatio === 'auto' ? '1K' : item.quality ?? '1K');
     setIsHistoryOpen(false);
   }
 
@@ -258,7 +265,8 @@ export function App() {
       type: 'generate-image',
       prompt: prompt.trim(),
       model,
-      quality,
+      quality: isQualityLimited ? '1K' : quality,
+      aspectRatio: selectedAspectRatio,
       references: visibleReferences,
     });
   }
@@ -384,6 +392,7 @@ export function App() {
                 type="button"
                 className="model-trigger"
                 aria-label="Model"
+                title={model}
                 aria-expanded={isModelMenuOpen}
                 onClick={() => setIsModelMenuOpen((value) => !value)}
               >
@@ -401,7 +410,11 @@ export function App() {
                       key={option}
                       aria-selected={option === model}
                       onClick={() => {
+                        const nextModel = imageModels.find((item) => item.name === option)!;
+                        const nextRatio = nextModel.aspectRatios.includes(selectedAspectRatio) ? selectedAspectRatio : 'auto';
                         setModel(option);
+                        setAspectRatio(nextRatio);
+                        if (nextModel.autoResolutionOnly1K && nextRatio === 'auto') setQuality('1K');
                         setIsModelMenuOpen(false);
                       }}
                     >
@@ -415,16 +428,34 @@ export function App() {
             <div className="quality-control" role="group" aria-label="Image quality">
               {qualityOptions.map((option) => (
                 <button
-                  className={`quality-option ${option === quality ? 'selected' : ''}`}
+                  className={`quality-option ${option === (isQualityLimited ? '1K' : quality) ? 'selected' : ''}`}
                   type="button"
                   key={option}
-                  aria-pressed={option === quality}
+                  aria-pressed={option === (isQualityLimited ? '1K' : quality)}
+                  disabled={isQualityLimited && option !== '1K'}
+                  title={isQualityLimited && option !== '1K' ? 'Выберите соотношение сторон для этого разрешения' : option}
                   onClick={() => setQuality(option)}
                 >
                   {option}
                 </button>
               ))}
             </div>
+
+            <select
+              className="aspect-ratio-control"
+              aria-label="Соотношение сторон"
+              title="Соотношение сторон"
+              value={selectedAspectRatio}
+              onChange={(event) => {
+                const nextRatio = event.target.value;
+                setAspectRatio(nextRatio);
+                if (currentModel.autoResolutionOnly1K && nextRatio === 'auto') setQuality('1K');
+              }}
+            >
+              {aspectRatioOptions.map((option) => (
+                <option key={option} value={option}>{option === 'auto' ? 'Авто' : option}</option>
+              ))}
+            </select>
 
             <label className="upload-control" aria-label="Upload reference image">
               <input type="file" accept="image/png,image/jpeg,image/webp" multiple onChange={onReferenceUpload} />
